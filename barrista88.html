@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barrista 88</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #0f0;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 20px;
+            margin: 0;
+        }
+        #terminal-history {
+            white-space: pre-wrap;
+            line-height: 1.4;
+            font-size: 16px;
+        }
+        #input-area {
+            display: flex;
+            align-items: center;
+            margin-top: 20px;
+            background: #111;
+            padding: 10px;
+            border: 1px solid #0f0;
+        }
+        #prompt-symbol {
+            color: #0f0;
+            margin-right: 10px;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        #user-input {
+            background: transparent;
+            border: none;
+            color: #0f0;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            outline: none;
+            flex-grow: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Hier wird alles direkt auf dem Bildschirm protokolliert (wie in der Konsole) -->
+    <div id="terminal-history">Willkommen bei Barrista 88!</div>
+
+    <!-- Das grüne Schreibfeld -->
+    <div id="input-area">
+        <span id="prompt-symbol">EINGABE ></span>
+        <input type="text" id="user-input" autofocus autocomplete="off" placeholder="Zahl oder Geldbetrag tippen & ENTER drücken...">
+    </div>
+
+    <script>
+        // ===================================================
+        // TERMINAL: Ausgabe und Eingabe
+        // ===================================================
+        const historyDiv = document.getElementById("terminal-history");
+        const inputEl = document.getElementById("user-input");
+        let inputResolver = null;
+
+        // Schreibt Text auf den grünen Bildschirm und parallel in die F12-Konsole
+        function print(text) {
+            if (text !== undefined) {
+                historyDiv.textContent += "\n" + text;
+                console.log(text);
+                window.scrollTo(0, document.body.scrollHeight);
+            }
+        }
+
+        // Stellt eine Frage und wartet, bis der Benutzer ENTER drückt
+        async function ask(frageText) {
+            print(frageText);
+            return new Promise((resolve) => {
+                inputResolver = resolve;
+            });
+        }
+
+        // Verarbeitet das Drücken der Enter-Taste
+        inputEl.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") {
+                const eingabeText = inputEl.value.trim();
+                inputEl.value = "";
+                if (inputResolver) {
+                    historyDiv.textContent += " " + eingabeText; // Zeigt an, was getippt wurde
+                    const resolve = inputResolver;
+                    inputResolver = null;
+                    resolve(eingabeText);
+                }
+            }
+        });
+
+        // Hält das Schreibfeld immer aktiv, wenn man irgendwo hinklickt
+        document.addEventListener("click", () => inputEl.focus());
+        const fokusTimer = setInterval(() => inputEl.focus(), 500);
+
+        // ===================================================
+        // GEMEINSAME VARIABLEN
+        // ===================================================
+        let maschinenStatus = "Bereit";
+        let umsatz = 0;
+        let kaffeeZaehler = 0;
+        let kaffeeSeitReinigung = 0;
+        let wasserStand = 1000;
+        let bohnenStand = 500;
+        let milchStand = 1000;
+
+        const WASSER_MAX = 1000;
+        const BOHNEN_MAX = 500;
+        const MILCH_MAX = 1000;
+        const WARTUNGS_GRENZE = 5;   // nach so vielen Getränken ist eine Reinigung nötig
+        const WARTUNGS_PIN = "8888"; // geheimer Code im Hauptmenü
+
+        // Getränke: Index 0-2 = normale Karte, Index 3-4 = Spezialgetränke
+        const kaffeeSorten   = ["Espresso", "Café Crème", "Cappuccino", "Espresso Doppio", "Latte Macchiato"];
+        const kaffeePreise   = [2.00, 2.50, 3.50, 3.20, 3.80];
+        const wasserBedarf   = [40, 150, 40, 80, 40];   // in ml
+        const bohnenBedarf   = [10, 16, 18, 20, 18];    // in g
+        const milchBedarf    = [0, 0, 120, 0, 200];     // in ml
+        const ERSTES_SPEZIAL = 3;
+
+        const bewertungen = [];
+
+        // ===================================================
+        // HILFSFUNKTIONEN
+        // ===================================================
+
+        // Wartet die angegebene Zeit in Millisekunden
+        function warte(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        // Formatiert einen Betrag als Euro mit Komma, z. B. 2,50€
+        function formatiereEuro(betrag) {
+            return betrag.toFixed(2).replace(".", ",") + "€";
+        }
+
+        // ===================================================
+        // MENÜS
+        // ===================================================
+
+        // Zeigt das Hauptmenü (der Wartungsmodus ist geheim und wird nicht angezeigt)
+        function zeigeHauptmenue() {
+            print("\n--- BARRISTA 88 HAUPTMENÜ ---");
+            if (pruefeServiceBedarf()) {
+                print("[!] SERVICE NÖTIG – bitte Personal informieren.");
+            }
+            print("1. Kaffee auswählen & brühen");
+            print("2. Spezialgetränke");
+            print("3. Status anzeigen");
+            print("4. Programm beenden");
+        }
+
+        // Zeigt die Getränke von Index "von" bis "bis" als nummerierte Liste
+        function zeigeGetraenkeKarte(titel, von, bis) {
+            print("\n--- " + titel + " ---");
+            let nummer = 1;
+            for (let i = von; i <= bis; i++) {
+                print(nummer + ". " + kaffeeSorten[i] + " (" + formatiereEuro(kaffeePreise[i]) + ")");
+                nummer++;
+            }
+            print(nummer + ". Zurück");
+        }
+
+        // Lässt den Kunden ein Getränk wählen
+        // Rückgabe: Index im Array oder -1 bei "Zurück" bzw. ungültiger Eingabe
+        async function getraenkWaehlen(von, bis) {
+            const anzahl = bis - von + 1;
+            const eingabe = await ask("\nWelches Getränk möchtest du? (1-" + (anzahl + 1) + "):");
+            const nummer = parseInt(eingabe);
+
+            if (nummer >= 1 && nummer <= anzahl && String(nummer) === eingabe) {
+                return von + nummer - 1;
+            }
+            if (eingabe !== String(anzahl + 1)) {
+                print("\n[-] Ungültige Auswahl!");
+            }
+            return -1;
+        }
+
+        // ===================================================
+        // BESTELLUNG: Prüfen, Bezahlen, Brühen, Bewerten
+        // ===================================================
+
+        // Prüft, ob genug Zutaten für das Getränk vorhanden sind
+        // Rückgabe: true oder false
+        function pruefeZutaten(index) {
+            return wasserStand >= wasserBedarf[index] &&
+                   bohnenStand >= bohnenBedarf[index] &&
+                   milchStand >= milchBedarf[index];
+        }
+
+        // Kasse: fragt den Geldbetrag ab und gibt Wechselgeld zurück
+        // Rückgabe: true, wenn bezahlt wurde, sonst false
+        async function bezahlen(index) {
+            const preis = kaffeePreise[index];
+            print("\n[Kasse]: " + kaffeeSorten[index] + " kostet " + formatiereEuro(preis) + ".");
+            const geldInput = await ask("Bitte Geld einwerfen (z.B. 2,00 oder 3,50):");
+            const eingezahlt = Number(geldInput.replace(",", "."));
+
+            if (geldInput === "" || isNaN(eingezahlt) || eingezahlt < preis) {
+                print("[-] Zu wenig Geld oder ungültige Eingabe! Vorgang abgebrochen.");
+                return false;
+            }
+
+            const wechselgeld = eingezahlt - preis;
+            if (wechselgeld > 0) {
+                print("[✔] Wechselgeld zurück: " + formatiereEuro(wechselgeld));
+            }
+            umsatz += preis;
+            return true;
+        }
+
+        // Zieht die verbrauchten Zutaten vom Vorrat ab
+        function zutatenVerbrauchen(index) {
+            wasserStand -= wasserBedarf[index];
+            bohnenStand -= bohnenBedarf[index];
+            milchStand -= milchBedarf[index];
+        }
+
+        // Brüht das Getränk und zählt die Statistik hoch
+        async function kaffeeBruehen(index) {
+            const name = kaffeeSorten[index];
+            maschinenStatus = "Brüht Kaffee...";
+            print("\n[+] " + name + " wird zubereitet...");
+            await warte(1500);
+
+            zutatenVerbrauchen(index);
+            kaffeeZaehler++;
+            kaffeeSeitReinigung++;
+            maschinenStatus = "Bereit";
+            print("    [✔] Fertig! Genieße deinen " + name + "!\n");
+        }
+
+        // Fragt die Kundenbewertung (1-5 Sterne) ab
+        async function bewertungAbfragen() {
+            const sterneInput = await ask("Wie zufrieden bist du? (Skala 1-5 Sterne):");
+            const sterne = parseInt(sterneInput);
+
+            if (sterne >= 1 && sterne <= 5 && String(sterne) === sterneInput) {
+                bewertungen.push(sterne);
+                print("[✔] Vielen Dank für deine Bewertung!");
+            } else {
+                print("[-] Ungültige Bewertung übersprungen.");
+            }
+        }
+
+        // Berechnet den Durchschnitt aller Bewertungen
+        // Rückgabe: Text, z. B. "4.5 / 5 Sterne"
+        function berechneBewertung() {
+            if (bewertungen.length === 0) return "Noch keine Bewertungen";
+            let summe = 0;
+            for (let i = 0; i < bewertungen.length; i++) summe += bewertungen[i];
+            return (summe / bewertungen.length).toFixed(1).replace(".", ",") + " / 5 Sterne";
+        }
+
+        // Kompletter Ablauf einer Bestellung
+        async function bestellen(index) {
+            if (!pruefeZutaten(index)) {
+                print("\n[-] Fehler: Nicht genügend Zutaten vorhanden.");
+                return;
+            }
+
+            const bezahlt = await bezahlen(index);
+            if (!bezahlt) return;
+
+            await kaffeeBruehen(index);
+            await bewertungAbfragen();
+
+            if (pruefeServiceBedarf()) {
+                print("\n[!] SERVICE NÖTIG: Bitte Reinigung durchführen.");
+            }
+        }
+
+        // ===================================================
+        // STATUS & SERVICE
+        // ===================================================
+
+        // Prüft, ob eine Reinigung fällig ist
+        // Rückgabe: true oder false
+        function pruefeServiceBedarf() {
+            return kaffeeSeitReinigung >= WARTUNGS_GRENZE;
+        }
+
+        // Zeigt Status, Ressourcen, Statistik und Bewertungen
+        function zeigeStatus() {
+            let status = maschinenStatus;
+            if (pruefeServiceBedarf()) {
+                status = "Service nötig!";
+            }
+
+            print("\n====================================");
+            print("[STATUS]: " + status);
+            print("[RESSOURCEN]: Wasser: " + wasserStand + " ml | Bohnen: " + bohnenStand + " g | Milch: " + milchStand + " ml");
+            print("[STATISTIK]: Gekocht: " + kaffeeZaehler + " | Gesamtumsatz: " + formatiereEuro(umsatz));
+            print("[KUNDENZUFRIEDENHEIT]: " + berechneBewertung());
+            print("====================================\n");
+        }
+
+        // ===================================================
+        // GEHEIMER WARTUNGSMODUS
+        // ===================================================
+
+        // Füllt Wasser, Bohnen und Milch wieder auf
+        function zutatenAuffuellen() {
+            wasserStand = WASSER_MAX;
+            bohnenStand = BOHNEN_MAX;
+            milchStand = MILCH_MAX;
+            print("\n[✔] Wasser, Bohnen und Milch vollständig aufgefüllt!");
+        }
+
+        // Reinigt die Maschine und setzt den Service-Zähler zurück
+        async function reinigen() {
+            maschinenStatus = "Reinigung läuft...";
+            print("\n[+] Reinigung gestartet...");
+            await warte(1500);
+            kaffeeSeitReinigung = 0;
+            maschinenStatus = "Bereit";
+            print("    [✔] Reinigung abgeschlossen!");
+        }
+
+        // Techniker-Menü, erreichbar nur über den geheimen Code im Hauptmenü
+        async function wartungsmodus() {
+            print("\n--- GEHEIMER WARTUNGSMODUS ---");
+            let wartungLaeuft = true;
+
+            while (wartungLaeuft) {
+                print("\n--- TECHNIKER MENÜ ---");
+                print("1. Zutaten auffüllen");
+                print("2. Reinigungsprogramm starten");
+                print("3. Zurück zum Hauptmenü");
+
+                const wartungAuswahl = await ask("\nWähle eine Aktion (1-3):");
+
+                if (wartungAuswahl === "1") {
+                    zutatenAuffuellen();
+                } else if (wartungAuswahl === "2") {
+                    await reinigen();
+                } else if (wartungAuswahl === "3") {
+                    wartungLaeuft = false;
+                } else {
+                    print("\n[-] Ungültige Auswahl!");
+                }
+            }
+        }
+
+        // ===================================================
+        // PROGRAMM-ENDE & HAUPTSCHLEIFE
+        // ===================================================
+
+        // Beendet das Programm und sperrt das Eingabefeld
+        function beenden() {
+            print("\nAuf Wiedersehen! Barrista 88 fährt herunter.");
+            clearInterval(fokusTimer);
+            inputEl.disabled = true;
+            inputEl.placeholder = "Programm beendet. Seite neu laden zum Starten.";
+        }
+
+        // Zentrale Programm-Schleife
+        async function starteKaffeemaschine() {
+            let programmLaeuft = true;
+
+            while (programmLaeuft) {
+                zeigeHauptmenue();
+                const auswahl = await ask("\nWähle eine Option (1-4):");
+
+                if (auswahl === "1") {
+                    zeigeGetraenkeKarte("KAFFEEKARTE", 0, ERSTES_SPEZIAL - 1);
+                    const index = await getraenkWaehlen(0, ERSTES_SPEZIAL - 1);
+                    if (index !== -1) await bestellen(index);
+                } else if (auswahl === "2") {
+                    zeigeGetraenkeKarte("SPEZIALGETRÄNKE", ERSTES_SPEZIAL, kaffeeSorten.length - 1);
+                    const index = await getraenkWaehlen(ERSTES_SPEZIAL, kaffeeSorten.length - 1);
+                    if (index !== -1) await bestellen(index);
+                } else if (auswahl === "3") {
+                    zeigeStatus();
+                } else if (auswahl === "4") {
+                    beenden();
+                    programmLaeuft = false;
+                } else if (auswahl === WARTUNGS_PIN) {
+                    await wartungsmodus();
+                } else {
+                    print("\n[-] Ungültige Auswahl! Bitte 1-4 eingeben.\n");
+                }
+            }
+        }
+
+        // Startet das Programm
+        setTimeout(starteKaffeemaschine, 300);
+    </script>
+</body>
+</html>
